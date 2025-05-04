@@ -1,0 +1,19 @@
+package dto
+
+import (
+	"event-ticketing/entity"
+	"github.com/gofrs/uuid/v5"
+	"time"
+)
+
+type BuyTicketRequest struct {
+	EventID      uuid.UUID           `json:"event_id" binding:"required"`
+	PurchaseDate time.Time           `json:"purchase_date"`
+}
+
+func (b *BuyTicketRequest) ToEntity() *entity.Ticket {
+	return &entity.Ticket{
+		EventID:      b.EventID,
+		PurchaseDate: b.PurchaseDate,
+	}
+}
