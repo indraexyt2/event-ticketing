@@ -1,0 +1,42 @@
+package config
+
+import (
+	"event-ticketing/entity"
+	"fmt"
+	"log"
+
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+)
+
+func SetupDatabase(config Config) (*gorm.DB, error) {
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+		config.DBUser, config.DBPassword, config.DBHost, config.DBPort, config.DBName)
+
+	logConfig := logger.Config{
+		SlowThreshold: 0,
+		LogLevel:      logger.Info,
+	}
+
+	if config.Environment == "production" {
+		logConfig.LogLevel = logger.Error
+	}
+
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logConfig.LogLevel),
+	})
+
+	if err != nil {
+		log.Printf("Failed to connect to database: %v", err)
+		return nil, err
+	}
+
+	if err := db.AutoMigrate(&entity.User{}, &entity.Event{}, &entity.Ticket{}); err != nil {
+		log.Printf("Failed to migrate database: %v", err)
+		return nil, err
+	}
+
+	log.Println("Database connected successfully")
+	return db, nil
+}

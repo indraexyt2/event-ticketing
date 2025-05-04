@@ -1,0 +1,123 @@
+package service
+
+import (
+	"errors"
+	"event-ticketing/entity"
+	"event-ticketing/repository"
+	"event-ticketing/utils"
+	"time"
+)
+
+type EventService interface {
+	CreateEvent(event *entity.Event) error
+	GetEventByID(id string) (*entity.Event, error)
+	GetAllEvents(params utils.PaginationParams, keyword, status, startDate, endDate string) ([]entity.Event, int64, error)
+	UpdateEvent(event *entity.Event) (*entity.Event, error)
+	DeleteEvent(id string) error
+}
+
+type eventService struct {
+	eventRepo  repository.EventRepository
+	ticketRepo repository.TicketRepository
+}
+
+func NewEventService(eventRepo repository.EventRepository, ticketRepo repository.TicketRepository) EventService {
+	return &eventService{
+		eventRepo:  eventRepo,
+		ticketRepo: ticketRepo,
+	}
+}
+
+func (s *eventService) CreateEvent(event *entity.Event) error {
+	existingEvent, err := s.eventRepo.FindByName(event.Name)
+	if err == nil && existingEvent != nil {
+		return errors.New("event name already exists")
+	}
+
+	if event.Capacity <= 0 {
+		return errors.New("event capacity must be greater than 0")
+	}
+
+	if event.Price < 0 {
+		return errors.New("event price cannot be less than 0")
+	}
+
+	if event.StartDate.Before(time.Now()) {
+		return errors.New("event start date must be in the future")
+	}
+
+	if event.EndDate.Before(event.StartDate) {
+		return errors.New("event end date must be after start date")
+	}
+
+	event.Status = entity.ActiveEvent
+
+	return s.eventRepo.Create(event)
+}
+
+func (s *eventService) GetEventByID(id string) (*entity.Event, error) {
+	return s.eventRepo.FindByID(id)
+}
+
+func (s *eventService) GetAllEvents(params utils.PaginationParams, keyword, status, startDate, endDate string) ([]entity.Event, int64, error) {
+	return s.eventRepo.FindAll(params, keyword, status, startDate, endDate)
+}
+
+func (s *eventService) UpdateEvent(event *entity.Event) (*entity.Event, error) {
+	existingEvent, err := s.eventRepo.FindByID(event.ID.String())
+	if err != nil {
+		return nil, err
+	}
+
+	if !existingEvent.CanBeModified() {
+		return nil, errors.New("cannot modify ongoing or completed event")
+	}
+
+	if event.Name != existingEvent.Name {
+		checkEvent, err := s.eventRepo.FindByName(event.Name)
+		if err == nil && checkEvent != nil {
+			return nil, errors.New("event name already exists")
+		}
+	}
+
+	if event.Capacity < existingEvent.TicketsSold {
+		return nil, errors.New("cannot reduce capacity below sold tickets count")
+	}
+
+	existingEvent.Name = event.Name
+	existingEvent.Description = event.Description
+	existingEvent.Capacity = event.Capacity
+	existingEvent.Price = event.Price
+	existingEvent.Location = event.Location
+
+	if !event.StartDate.Equal(existingEvent.StartDate) && event.StartDate.Before(time.Now()) {
+		return nil, errors.New("event start date must be in the future")
+	}
+
+	if event.EndDate.Before(event.StartDate) {
+		return nil, errors.New("event end date must be after start date")
+	}
+
+	existingEvent.StartDate = event.StartDate
+	existingEvent.EndDate = event.EndDate
+
+	err = s.eventRepo.Update(existingEvent)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.eventRepo.FindByID(event.ID.String())
+}
+
+func (s *eventService) DeleteEvent(id string) error {
+	event, err := s.eventRepo.FindByID(id)
+	if err != nil {
+		return err
+	}
+
+	if !event.CanBeModified() {
+		return errors.New("cannot delete ongoing or completed event")
+	}
+
+	return s.eventRepo.Delete(id)
+}

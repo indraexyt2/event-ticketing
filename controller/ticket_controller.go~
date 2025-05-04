@@ -1,0 +1,214 @@
+package controller
+
+import (
+	"event-ticketing/dto"
+	"event-ticketing/service"
+	"event-ticketing/utils"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"github.com/gofrs/uuid/v5"
+)
+
+type TicketController interface {
+	BuyTicket(c *gin.Context)
+	GetTicketByID(c *gin.Context)
+	GetUserTickets(c *gin.Context)
+	GetEventTickets(c *gin.Context)
+	CancelTicket(c *gin.Context)
+}
+
+type ticketController struct {
+	ticketService service.TicketService
+}
+
+func NewTicketController(ticketService service.TicketService) TicketController {
+	return &ticketController{
+		ticketService: ticketService,
+	}
+}
+
+// BuyTicket godoc
+// @Summary Buy a ticket for an event
+// @Description Purchase a ticket for a specific event
+// @Tags tickets
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Param ticket body dto.BuyTicketRequest true "Ticket purchase info"
+// @Success 201 {object} utils.Response
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 409 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /tickets [post]
+func (ctrl *ticketController) BuyTicket(c *gin.Context) {
+	var log = utils.Log
+
+	var ticketRequest dto.BuyTicketRequest
+	if err := c.ShouldBindJSON(&ticketRequest); err != nil {
+		log.Errorf("Failed to bind JSON: %v", err)
+		utils.BadRequestResponse(c, "Invalid request body", err.Error())
+		return
+	}
+
+	if err := utils.ValidateStruct(ticketRequest); err != nil {
+		log.Errorf("Validation error: %v", err)
+		utils.BadRequestResponse(c, "Invalid request body", err.Error())
+		return
+	}
+
+	ticket := ticketRequest.ToEntity()
+
+	userID, exists := c.Get("userID")
+	if !exists {
+		log.Error("User not authenticated")
+		utils.UnauthorizedResponse(c, "User not authenticated")
+		return
+	}
+
+	userUUID, err := uuid.FromString(userID.(string))
+	if err != nil {
+		log.Errorf("Invalid user ID: %v", err)
+		utils.BadRequestResponse(c, "Invalid user ID", err.Error())
+		return
+	}
+
+	ticket.UserID = userUUID
+
+	ticket, err = ctrl.ticketService.BuyTicket(ticket)
+	if err != nil {
+		log.Errorf("Failed to buy ticket: %v", err)
+		utils.BadRequestResponse(c, "Failed to buy ticket", err.Error())
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusCreated, "Ticket purchased successfully", ticket)
+}
+
+// GetTicketByID godoc
+// @Summary Get a ticket by ID
+// @Description Get details of a specific ticket
+// @Tags tickets
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Param id path string true "Ticket ID"
+// @Success 200 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /tickets/{id} [get]
+func (ctrl *ticketController) GetTicketByID(c *gin.Context) {
+	var log = utils.Log
+	ticketIDStr := c.Param("id")
+	if ticketIDStr == "" {
+		log.Error("Ticket ID not found in request")
+		utils.BadRequestResponse(c, "Invalid ticket ID", "Ticket ID is required")
+		return
+	}
+
+	ticket, err := ctrl.ticketService.GetTicketByID(ticketIDStr)
+	if err != nil {
+		log.Errorf("Failed to get ticket: %v", err)
+		utils.NotFoundResponse(c, "Ticket not found")
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Ticket retrieved successfully", ticket)
+}
+
+// GetUserTickets godoc
+// @Summary Get all tickets for current user
+// @Description Get all tickets purchased by the current authenticated user
+// @Tags tickets
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Param page query string false "Page number (default: 1)"
+// @Param limit query string false "Results per page (default: 10)"
+// @Success 200 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /tickets/my-tickets [get]
+func (ctrl *ticketController) GetUserTickets(c *gin.Context) {
+	var log = utils.Log
+
+	userID, exists := c.Get("userID")
+	if !exists {
+		log.Error("User not authenticated")
+		utils.UnauthorizedResponse(c, "User not authenticated")
+		return
+	}
+
+	params := utils.NewPaginationParams(c.DefaultQuery("page", "1"), c.DefaultQuery("limit", "10"))
+
+	tickets, totalItems, err := ctrl.ticketService.GetTicketsByUserID(userID.(string), params)
+	if err != nil {
+		log.Errorf("Failed to retrieve tickets: %v", err)
+		utils.InternalServerErrorResponse(c, "Failed to retrieve tickets", err.Error())
+		return
+	}
+
+	utils.PaginatedResponse(c, http.StatusOK, "Tickets retrieved successfully", tickets, totalItems, params.Page, params.Limit)
+}
+
+// GetEventTickets godoc
+// @Summary Get all tickets for an event
+// @Description Get all tickets for a specific event (admin only)
+// @Tags tickets
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Param id path string true "Event ID"
+// @Param page query string false "Page number (default: 1)"
+// @Param limit query string false "Results per page (default: 10)"
+// @Success 200 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /events/{id}/tickets [get]
+func (ctrl *ticketController) GetEventTickets(c *gin.Context) {
+	var log = utils.Log
+
+	eventID := c.Param("id")
+	params := utils.NewPaginationParams(c.DefaultQuery("page", "1"), c.DefaultQuery("limit", "10"))
+
+	tickets, totalItems, err := ctrl.ticketService.GetTicketsByEventID(eventID, params)
+	if err != nil {
+		log.Errorf("Failed to retrieve tickets: %v", err)
+		utils.InternalServerErrorResponse(c, "Failed to retrieve tickets", err.Error())
+		return
+	}
+
+	utils.PaginatedResponse(c, http.StatusOK, "Tickets retrieved successfully", tickets, totalItems, params.Page, params.Limit)
+}
+
+// CancelTicket godoc
+// @Summary Cancel a ticket
+// @Description Cancel a purchased ticket
+// @Tags tickets
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Param id path string true "Ticket ID"
+// @Success 200 {object} utils.Response
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /tickets/{id}/cancel [put]
+func (ctrl *ticketController) CancelTicket(c *gin.Context) {
+	var log = utils.Log
+	
+	id := c.Param("id")
+
+	if err := ctrl.ticketService.CancelTicket(id); err != nil {
+		utils.BadRequestResponse(c, "Failed to cancel ticket", err.Error())
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Ticket cancelled successfully", nil)
+}

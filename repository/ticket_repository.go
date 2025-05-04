@@ -1,0 +1,135 @@
+package repository
+
+import (
+	"errors"
+	"event-ticketing/entity"
+	"event-ticketing/utils"
+
+	"gorm.io/gorm"
+)
+
+type TicketRepository interface {
+	Create(ticket *entity.Ticket) error
+	FindByID(id string) (*entity.Ticket, error)
+	FindByIDWithoutEvent(id string) (*entity.Ticket, error)
+	FindAll(params utils.PaginationParams) ([]entity.Ticket, int64, error)
+	FindByUserID(userID string, params utils.PaginationParams) ([]entity.Ticket, int64, error)
+	FindByEventID(eventID string, params utils.PaginationParams) ([]entity.Ticket, int64, error)
+	Update(ticket *entity.Ticket) error
+	Delete(id string) error
+	CountByEventID(eventID string) (int, error)
+	CountByEventAndStatus(eventID string, status entity.TicketStatus) (int, error)
+	GetRevenue(eventID string) (float64, error)
+	WithTx(tx *gorm.DB) TicketRepository
+}
+
+type ticketRepository struct {
+	db *gorm.DB
+}
+
+func NewTicketRepository(db *gorm.DB) TicketRepository {
+	return &ticketRepository{db}
+}
+
+func (r *ticketRepository) Create(ticket *entity.Ticket) error {
+	return r.db.Create(ticket).Error
+}
+
+func (r *ticketRepository) FindByID(id string) (*entity.Ticket, error) {
+	var ticket entity.Ticket
+	err := r.db.Preload("Event").Where("id = ?", id).First(&ticket).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("ticket not found")
+		}
+		return nil, err
+	}
+	return &ticket, nil
+}
+
+func (r *ticketRepository) FindByIDWithoutEvent(id string) (*entity.Ticket, error) {
+	var ticket entity.Ticket
+	err := r.db.Where("id = ?", id).First(&ticket).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("ticket not found")
+		}
+		return nil, err
+	}
+	return &ticket, nil
+}
+
+func (r *ticketRepository) WithTx(tx *gorm.DB) TicketRepository {
+	return &ticketRepository{db: tx}
+}
+
+func (r *ticketRepository) FindAll(params utils.PaginationParams) ([]entity.Ticket, int64, error) {
+	var tickets []entity.Ticket
+	var count int64
+
+	if err := r.db.Model(&entity.Ticket{}).Count(&count).Error; err != nil {
+		return nil, 0, err
+	}
+
+	if err := r.db.Preload("Event").Offset(params.GetOffset()).Limit(params.GetLimit()).Find(&tickets).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return tickets, count, nil
+}
+
+func (r *ticketRepository) FindByUserID(userID string, params utils.PaginationParams) ([]entity.Ticket, int64, error) {
+	var tickets []entity.Ticket
+	var count int64
+
+	if err := r.db.Model(&entity.Ticket{}).Where("user_id = ?", userID).Count(&count).Error; err != nil {
+		return nil, 0, err
+	}
+
+	if err := r.db.Preload("Event").Where("user_id = ?", userID).Offset(params.GetOffset()).Limit(params.GetLimit()).Find(&tickets).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return tickets, count, nil
+}
+
+func (r *ticketRepository) FindByEventID(eventID string, params utils.PaginationParams) ([]entity.Ticket, int64, error) {
+	var tickets []entity.Ticket
+	var count int64
+
+	if err := r.db.Model(&entity.Ticket{}).Where("event_id = ?", eventID).Count(&count).Error; err != nil {
+		return nil, 0, err
+	}
+
+	if err := r.db.Preload("Event").Where("event_id = ?", eventID).Offset(params.GetOffset()).Limit(params.GetLimit()).Find(&tickets).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return tickets, count, nil
+}
+
+func (r *ticketRepository) Update(ticket *entity.Ticket) error {
+	return r.db.Save(ticket).Error
+}
+
+func (r *ticketRepository) Delete(id string) error {
+	return r.db.Delete(&entity.Ticket{}, id).Error
+}
+
+func (r *ticketRepository) CountByEventID(eventID string) (int, error) {
+	var count int64
+	err := r.db.Model(&entity.Ticket{}).Where("event_id = ?", eventID).Count(&count).Error
+	return int(count), err
+}
+
+func (r *ticketRepository) CountByEventAndStatus(eventID string, status entity.TicketStatus) (int, error) {
+	var count int64
+	err := r.db.Model(&entity.Ticket{}).Where("event_id = ? AND status = ?", eventID, status).Count(&count).Error
+	return int(count), err
+}
+
+func (r *ticketRepository) GetRevenue(eventID string) (float64, error) {
+	var revenue float64
+	err := r.db.Model(&entity.Ticket{}).Select("COALESCE(SUM(price), 0)").Where("event_id = ? AND status = ?", eventID, entity.PurchasedTicket).Scan(&revenue).Error
+	return revenue, err
+}

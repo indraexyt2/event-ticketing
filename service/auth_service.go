@@ -1,0 +1,65 @@
+package service
+
+import (
+	"errors"
+	"event-ticketing/config"
+	"event-ticketing/entity"
+	"event-ticketing/middleware"
+	"event-ticketing/repository"
+
+	"golang.org/x/crypto/bcrypt"
+)
+
+type AuthService interface {
+	Register(user *entity.User) error
+	Login(email, password string) (string, error)
+	GetUserByID(id string) (*entity.User, error)
+}
+
+type authService struct {
+	userRepo repository.UserRepository
+	config   config.Config
+}
+
+func NewAuthService(userRepo repository.UserRepository, config config.Config) AuthService {
+	return &authService{
+		userRepo: userRepo,
+		config:   config,
+	}
+}
+
+func (s *authService) Register(user *entity.User) error {
+	existingUser, err := s.userRepo.FindByEmail(user.Email)
+	if err == nil && existingUser != nil {
+		return errors.New("email already in use")
+	}
+
+	if user.Role == "" {
+		user.Role = entity.UserRole
+	}
+
+	return s.userRepo.Create(user)
+}
+
+func (s *authService) Login(email, password string) (string, error) {
+	user, err := s.userRepo.FindByEmail(email)
+	if err != nil {
+		return "", errors.New("invalid email or password")
+	}
+
+	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password))
+	if err != nil {
+		return "", errors.New("invalid email or password")
+	}
+
+	token, err := middleware.GenerateToken(user.ID.String(), user.Email, user.Role, s.config.JWTSecret, s.config.JWTExpiresIn)
+	if err != nil {
+		return "", err
+	}
+
+	return token, nil
+}
+
+func (s *authService) GetUserByID(id string) (*entity.User, error) {
+	return s.userRepo.FindByID(id)
+}

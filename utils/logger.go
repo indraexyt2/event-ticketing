@@ -1,0 +1,36 @@
+package utils
+
+import (
+	"os"
+	"time"
+
+	"github.com/sirupsen/logrus"
+)
+
+var Log *logrus.Logger
+
+func InitLogger(env string) {
+	Log = logrus.New()
+
+	if env == "production" {
+		Log.SetFormatter(&logrus.JSONFormatter{
+			TimestampFormat: time.RFC3339,
+		})
+		Log.SetLevel(logrus.InfoLevel)
+
+		file, err := os.OpenFile("logs/app.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+		if err == nil {
+			Log.SetOutput(file)
+		} else {
+			Log.Warn("Failed to log to file, using default stderr")
+		}
+
+	} else {
+		Log.SetFormatter(&logrus.TextFormatter{
+			FullTimestamp: true,
+			ForceColors:   true,
+		})
+		Log.SetOutput(os.Stdout)
+		Log.SetLevel(logrus.DebugLevel)
+	}
+}

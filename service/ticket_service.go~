@@ -1,0 +1,124 @@
+package service
+
+import (
+	"errors"
+	"event-ticketing/entity"
+	"event-ticketing/repository"
+	"event-ticketing/utils"
+	"fmt"
+	"gorm.io/gorm"
+	"math/rand"
+	"time"
+)
+
+type TicketService interface {
+	BuyTicket(ticket *entity.Ticket) (*entity.Ticket, error)
+	GetTicketByID(id string) (*entity.Ticket, error)
+	GetAllTickets(params utils.PaginationParams) ([]entity.Ticket, int64, error)
+	GetTicketsByUserID(userID string, params utils.PaginationParams) ([]entity.Ticket, int64, error)
+	GetTicketsByEventID(eventID string, params utils.PaginationParams) ([]entity.Ticket, int64, error)
+	CancelTicket(id string) error
+}
+
+type ticketService struct {
+	db         *gorm.DB
+	ticketRepo repository.TicketRepository
+	eventRepo  repository.EventRepository
+}
+
+func NewTicketService(
+	db *gorm.DB,
+	ticketRepo repository.TicketRepository,
+	eventRepo repository.EventRepository,
+) TicketService {
+	return &ticketService{
+		db:         db,
+		ticketRepo: ticketRepo,
+		eventRepo:  eventRepo,
+	}
+}
+
+func (s *ticketService) BuyTicket(ticket *entity.Ticket) (*entity.Ticket, error) {
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		ticketRepo := s.ticketRepo.WithTx(tx)
+		eventRepo := s.eventRepo.WithTx(tx)
+
+		event, err := eventRepo.FindByIDForUpdate(ticket.EventID.String())
+		if err != nil {
+			return err
+		}
+
+		if event.Status != entity.ActiveEvent {
+			return errors.New("event not active")
+		}
+
+		if !event.HasAvailableTickets(1) {
+			return errors.New("event is sold out")
+		}
+
+		ticket.BookingCode = generateBookingCode()
+		ticket.Status = entity.PurchasedTicket
+		ticket.PurchaseDate = time.Now()
+		ticket.Price = event.Price
+
+		if err := ticketRepo.Create(ticket); err != nil {
+			return err
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	ticket, err = s.ticketRepo.FindByID(ticket.ID.String())
+	if err != nil {
+		return nil, err
+	}
+
+	return ticket, nil
+}
+
+func (s *ticketService) GetTicketByID(id string) (*entity.Ticket, error) {
+	return s.ticketRepo.FindByID(id)
+}
+
+func (s *ticketService) GetAllTickets(params utils.PaginationParams) ([]entity.Ticket, int64, error) {
+	return s.ticketRepo.FindAll(params)
+}
+
+func (s *ticketService) GetTicketsByUserID(userID string, params utils.PaginationParams) ([]entity.Ticket, int64, error) {
+	return s.ticketRepo.FindByUserID(userID, params)
+}
+
+func (s *ticketService) GetTicketsByEventID(eventID string, params utils.PaginationParams) ([]entity.Ticket, int64, error) {
+	return s.ticketRepo.FindByEventID(eventID, params)
+}
+
+func (s *ticketService) CancelTicket(id string) error {
+	// Ambil tiket
+	ticket, err := s.ticketRepo.FindByID(id)
+	if err != nil {
+		return err
+	}
+
+	// Validasi bisa dibatalkan
+	if !ticket.CanBeCancelled() {
+		return errors.New("ticket cannot be cancelled")
+	}
+
+	// Update status
+	ticket.Status = entity.CancelledTicket
+	return s.ticketRepo.Update(ticket)
+}
+
+// generateBookingCode menghasilkan kode booking unik
+func generateBookingCode() string {
+	rand.Seed(time.Now().UnixNano())
+	characters := "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	result := ""
+	for i := 0; i < 8; i++ {
+		result += string(characters[rand.Intn(len(characters))])
+	}
+	return fmt.Sprintf("TKT-%s", result)
+}

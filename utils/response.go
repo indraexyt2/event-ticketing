@@ -1,0 +1,97 @@
+package utils
+
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+)
+
+type Response struct {
+	Status  int         `json:"status"`
+	Message string      `json:"message"`
+	Data    interface{} `json:"data,omitempty"`
+	Error   string      `json:"error,omitempty"`
+}
+
+type PaginationResponse struct {
+	Items       interface{} `json:"items"`
+	TotalItems  int64       `json:"total_items"`
+	TotalPages  int         `json:"total_pages"`
+	CurrentPage int         `json:"current_page"`
+	Limit       int         `json:"limit"`
+}
+
+func SuccessResponse(c *gin.Context, status int, message string, data interface{}) {
+	c.JSON(status, Response{
+		Status:  status,
+		Message: message,
+		Data:    data,
+	})
+}
+
+func ErrorResponse(c *gin.Context, status int, message string, err string) {
+	c.JSON(status, Response{
+		Status:  status,
+		Message: message,
+		Error:   err,
+	})
+}
+
+func AbortWithError(c *gin.Context, status int, message string, err string) {
+	c.AbortWithStatusJSON(status, Response{
+		Status:  status,
+		Message: message,
+		Error:   err,
+	})
+}
+
+func PaginatedResponse(c *gin.Context, status int, message string, items interface{}, totalItems int64, currentPage, limit int) {
+	totalPages := int(totalItems) / limit
+	if int(totalItems)%limit != 0 {
+		totalPages++
+	}
+
+	paginationData := PaginationResponse{
+		Items:       items,
+		TotalItems:  totalItems,
+		TotalPages:  totalPages,
+		CurrentPage: currentPage,
+		Limit:       limit,
+	}
+
+	c.JSON(status, Response{
+		Status:  status,
+		Message: message,
+		Data:    paginationData,
+	})
+}
+
+// 400 Bad Request
+func BadRequestResponse(c *gin.Context, message string, err string) {
+	ErrorResponse(c, http.StatusBadRequest, message, err)
+}
+
+// 401 Unauthorized
+func UnauthorizedResponse(c *gin.Context, message string) {
+	ErrorResponse(c, http.StatusUnauthorized, message, "")
+}
+
+// 403 Forbidden
+func ForbiddenResponse(c *gin.Context, message string) {
+	ErrorResponse(c, http.StatusForbidden, message, "")
+}
+
+// 404 Not Found
+func NotFoundResponse(c *gin.Context, message string) {
+	ErrorResponse(c, http.StatusNotFound, message, "")
+}
+
+// 409 Conflict
+func ConflictResponse(c *gin.Context, message string, err string) {
+	ErrorResponse(c, http.StatusConflict, message, err)
+}
+
+// 500 Internal Server Error
+func InternalServerErrorResponse(c *gin.Context, message string, err string) {
+	ErrorResponse(c, http.StatusInternalServerError, message, err)
+}

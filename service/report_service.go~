@@ -1,0 +1,121 @@
+package service
+
+import (
+	"event-ticketing/entity"
+	"event-ticketing/repository"
+	"event-ticketing/utils"
+	"math"
+	"time"
+)
+
+type SummaryReport struct {
+	TotalEvents    int       `json:"total_events"`
+	TotalTickets   int       `json:"total_tickets"`
+	TotalSold      int       `json:"total_sold"`
+	TotalCancelled int       `json:"total_cancelled"`
+	TotalRevenue   float64   `json:"total_revenue"`
+	GeneratedAt    time.Time `json:"generated_at"`
+}
+
+type EventReport struct {
+	Event            entity.Event `json:"event"`
+	TotalTickets     int          `json:"total_tickets"`
+	SoldTickets      int          `json:"sold_tickets"`
+	CancelledTickets int          `json:"cancelled_tickets"`
+	Revenue          float64      `json:"revenue"`
+	GeneratedAt      time.Time    `json:"generated_at"`
+}
+
+type ReportService interface {
+	GenerateSummaryReport() (*SummaryReport, error)
+	GenerateEventReport(eventID string) (*EventReport, error)
+}
+
+type reportService struct {
+	eventRepo  repository.EventRepository
+	userRepo   repository.UserRepository
+	ticketRepo repository.TicketRepository
+}
+
+func NewReportService(
+	eventRepo repository.EventRepository,
+	userRepo repository.UserRepository,
+	ticketRepo repository.TicketRepository,
+) ReportService {
+	return &reportService{
+		eventRepo:  eventRepo,
+		userRepo:   userRepo,
+		ticketRepo: ticketRepo,
+	}
+}
+
+func (s *reportService) GenerateSummaryReport() (*SummaryReport, error) {
+	var totalTickets int = 0
+	var soldTickets int = 0
+	var cancelledTickets int = 0
+	var totalRevenue float64 = 0
+
+	events, totalEvents, err := s.eventRepo.FindAll(utils.PaginationParams{Page: 1, Limit: math.MaxInt64}, "", "", "", "")
+	if err != nil {
+		return nil, err
+	}
+
+	for _, event := range events {
+		totalTickets += event.Capacity
+
+		soldTickets, err = s.ticketRepo.CountByEventAndStatus(event.ID.String(), entity.PurchasedTicket)
+		if err != nil {
+			return nil, err
+		}
+
+		cancelledTickets, err = s.ticketRepo.CountByEventAndStatus(event.ID.String(), entity.CancelledTicket)
+		if err != nil {
+			return nil, err
+		}
+		revenue, err := s.ticketRepo.GetRevenue(event.ID.String())
+		if err != nil {
+			return nil, err
+		}
+		totalRevenue += revenue
+	}
+
+	return &SummaryReport{
+		TotalEvents:    int(totalEvents),
+		TotalTickets:   totalTickets,
+		TotalSold:      soldTickets,
+		TotalCancelled: cancelledTickets,
+		TotalRevenue:   totalRevenue,
+		GeneratedAt:    time.Now(),
+	}, nil
+}
+
+func (s *reportService) GenerateEventReport(eventID string) (*EventReport, error) {
+	event, err := s.eventRepo.FindByID(eventID)
+	if err != nil {
+		return nil, err
+	}
+
+	soldTickets, err := s.ticketRepo.CountByEventAndStatus(eventID, entity.PurchasedTicket)
+	if err != nil {
+		return nil, err
+	}
+
+	cancelledTickets, err := s.ticketRepo.CountByEventAndStatus(eventID, entity.CancelledTicket)
+	if err != nil {
+		return nil, err
+	}
+
+	revenue, err := s.ticketRepo.GetRevenue(eventID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &EventReport{
+		Event:            *event,
+		TotalTickets:     event.Capacity,
+		SoldTickets:      soldTickets,
+		CancelledTickets: cancelledTickets,
+		Revenue:          revenue,
+		GeneratedAt:      time.Now(),
+	}, nil
+}
